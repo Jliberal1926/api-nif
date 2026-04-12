@@ -6,6 +6,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// =========================
+// CONSULTA NIF
+// =========================
 app.all('/consultar_nif', async (req, res) => {
 
     const nif = req.method === 'POST' ? req.body.nif : req.query.nif;
@@ -19,16 +22,22 @@ app.all('/consultar_nif', async (req, res) => {
     try {
 
         // =========================
-        // BROWSER (RENDER SAFE)
+        // DETECTAR RENDER
+        // =========================
+        const isRender = process.env.RENDER === "true";
+
+        // =========================
+        // INICIAR BROWSER
         // =========================
         browser = await puppeteer.launch({
-            headless: true, // 🔥 obrigatório no Render
+            headless: "new",
+            executablePath: isRender
+                ? process.env.PUPPETEER_EXECUTABLE_PATH
+                : undefined,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--ignore-certificate-errors',
-                '--ignore-certificate-errors-spki-list'
+                '--disable-dev-shm-usage'
             ]
         });
 
@@ -37,7 +46,7 @@ app.all('/consultar_nif', async (req, res) => {
         await page.setBypassCSP(true);
 
         // =========================
-        // ABRIR AGT
+        // ABRIR SITE AGT
         // =========================
         await page.goto(
             'https://portaldocontribuinte.minfin.gov.ao/consultar-nif-do-contribuinte',
@@ -45,81 +54,59 @@ app.all('/consultar_nif', async (req, res) => {
         );
 
         // =========================
-        // INPUT NIF
+        // ESPERAR INPUT
         // =========================
         await page.waitForSelector('#j_id_2x\\:txtNIFNumber', { visible: true });
 
-        await page.evaluate((nif) => {
-            const input = document.querySelector('#j_id_2x\\:txtNIFNumber');
-            if (input) {
-                input.value = '';
-                input.focus();
-                input.value = nif;
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            }
-        }, nif);
+        // =========================
+        // PREENCHER NIF
+        // =========================
+        await page.type('#j_id_2x\\:txtNIFNumber', nif, { delay: 50 });
 
         // =========================
-        // CLICK PESQUISA
+        // CLICAR PESQUISAR
         // =========================
         await page.evaluate(() => {
-
             const btn = document.querySelector('#j_id_2x\\:j_id_34');
-
-            if (btn) {
-                btn.click();
-            } else if (window.PrimeFaces && PrimeFaces.ab) {
-                PrimeFaces.ab({
-                    s: 'j_id_2x:j_id_34',
-                    p: 'j_id_2x',
-                    u: 'showpanelNIF'
-                });
-            }
-
+            if (btn) btn.click();
         });
 
         // =========================
-        // ESPERA DINÂMICA (MELHOR QUE 10s FIXO)
+        // ESPERAR RESULTADO
         // =========================
         await page.waitForFunction(() => {
             return document.body.innerText.includes("Nome") ||
                    document.body.innerText.includes("Tipo");
-        }, { timeout: 15000 });
+        }, { timeout: 20000 });
 
         // =========================
-        // TEXTO FINAL
+        // PEGAR TEXTO DA PÁGINA
         // =========================
-        const resultadoTexto = await page.evaluate(() => document.body.innerText);
+        const texto = await page.evaluate(() => document.body.innerText);
 
-        const linhas = resultadoTexto
+        const linhas = texto
             .split('\n')
             .map(l => l.trim())
             .filter(Boolean);
 
-        const pegarValor = (campo) => {
+        const getValue = (campo) => {
             for (let i = 0; i < linhas.length; i++) {
                 if (linhas[i].toLowerCase().includes(campo.toLowerCase())) {
-
-                    let valor = linhas[i].split(':')[1];
-
-                    if (!valor && linhas[i + 1]) {
-                        valor = linhas[i + 1];
-                    }
-
-                    return (valor || '').trim();
+                    let val = linhas[i].split(':')[1];
+                    if (!val && linhas[i + 1]) val = linhas[i + 1];
+                    return (val || '').trim();
                 }
             }
             return "";
         };
 
-        const nif_result = pegarValor("NIF");
-        const nome = pegarValor("Nome");
-        const tipo = pegarValor("Tipo");
-        const estado = pegarValor("Estado");
-        const inadinplente = pegarValor("Inadimplente");
-        const regime_iva = pegarValor("Regime de IVA");
-        const residente = pegarValor("Residente Fiscal");
+        const nif_result = getValue("NIF");
+        const nome = getValue("Nome");
+        const tipo = getValue("Tipo");
+        const estado = getValue("Estado");
+        const inadinplente = getValue("Inadimplente");
+        const regime_iva = getValue("Regime de IVA");
+        const residente = getValue("Residente Fiscal");
 
         await browser.close();
 
@@ -155,10 +142,10 @@ app.all('/consultar_nif', async (req, res) => {
 });
 
 // =========================
-// PORT RENDER FIX
+// PORT RENDER
 // =========================
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log('Servidor rodando na porta ' + PORT);
+    console.log("Servidor rodando na porta " + PORT);
 });
