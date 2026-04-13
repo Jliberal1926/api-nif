@@ -1,14 +1,12 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 
 const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// =========================
-// CONSULTA NIF
-// =========================
 app.all('/consultar_nif', async (req, res) => {
 
     const nif = req.method === 'POST' ? req.body.nif : req.query.nif;
@@ -21,75 +19,38 @@ app.all('/consultar_nif', async (req, res) => {
 
     try {
 
-        // =========================
-        // DETECTAR RENDER
-        // =========================
-        const isRender = process.env.RENDER === "true";
-
-        // =========================
-        // INICIAR BROWSER
-        // =========================
         browser = await puppeteer.launch({
-            headless: "new",
-            executablePath: isRender
-                ? process.env.PUPPETEER_EXECUTABLE_PATH
-                : undefined,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
-            ]
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless,
         });
 
         const page = await browser.newPage();
 
-        await page.setBypassCSP(true);
-
-        // =========================
-        // ABRIR SITE AGT
-        // =========================
         await page.goto(
             'https://portaldocontribuinte.minfin.gov.ao/consultar-nif-do-contribuinte',
-            { waitUntil: 'networkidle2', timeout: 60000 }
+            { waitUntil: 'networkidle2' }
         );
 
-        // =========================
-        // ESPERAR INPUT
-        // =========================
-        await page.waitForSelector('#j_id_2x\\:txtNIFNumber', { visible: true });
+        await page.waitForSelector('#j_id_2x\\:txtNIFNumber');
 
-        // =========================
-        // PREENCHER NIF
-        // =========================
-        await page.type('#j_id_2x\\:txtNIFNumber', nif, { delay: 50 });
+        await page.type('#j_id_2x\\:txtNIFNumber', nif);
 
-        // =========================
-        // CLICAR PESQUISAR
-        // =========================
         await page.evaluate(() => {
             const btn = document.querySelector('#j_id_2x\\:j_id_34');
             if (btn) btn.click();
         });
 
-        // =========================
-        // ESPERAR RESULTADO
-        // =========================
-        await page.waitForFunction(() => {
-            return document.body.innerText.includes("Nome") ||
-                   document.body.innerText.includes("Tipo");
-        }, { timeout: 20000 });
+        await page.waitForFunction(() =>
+            document.body.innerText.includes("Nome")
+        );
 
-        // =========================
-        // PEGAR TEXTO DA PÁGINA
-        // =========================
         const texto = await page.evaluate(() => document.body.innerText);
 
-        const linhas = texto
-            .split('\n')
-            .map(l => l.trim())
-            .filter(Boolean);
+        const linhas = texto.split('\n').map(l => l.trim()).filter(Boolean);
 
-        const getValue = (campo) => {
+        const get = (campo) => {
             for (let i = 0; i < linhas.length; i++) {
                 if (linhas[i].toLowerCase().includes(campo.toLowerCase())) {
                     let val = linhas[i].split(':')[1];
@@ -100,39 +61,22 @@ app.all('/consultar_nif', async (req, res) => {
             return "";
         };
 
-        const nif_result = getValue("NIF");
-        const nome = getValue("Nome");
-        const tipo = getValue("Tipo");
-        const estado = getValue("Estado");
-        const inadinplente = getValue("Inadimplente");
-        const regime_iva = getValue("Regime de IVA");
-        const residente = getValue("Residente Fiscal");
-
         await browser.close();
-
-        if (!nome) {
-            return res.json({
-                status: 'erro',
-                mensagem: 'Não foi possível extrair dados do NIF'
-            });
-        }
 
         return res.json({
             status: 'ok',
-            nif: nif_result,
-            nome,
-            tipo,
-            estado,
-            inadinplente,
-            regime_iva,
-            residente
+            nif: get("NIF"),
+            nome: get("Nome"),
+            tipo: get("Tipo"),
+            estado: get("Estado"),
+            inadinplente: get("Inadimplente"),
+            regime_iva: get("Regime de IVA"),
+            residente: get("Residente Fiscal")
         });
 
     } catch (e) {
 
-        if (browser) {
-            try { await browser.close(); } catch {}
-        }
+        if (browser) await browser.close();
 
         return res.json({
             status: 'erro',
@@ -141,11 +85,8 @@ app.all('/consultar_nif', async (req, res) => {
     }
 });
 
-// =========================
-// PORT RENDER
-// =========================
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log("Servidor rodando na porta " + PORT);
+    console.log('Servidor rodando na porta ' + PORT);
 });
