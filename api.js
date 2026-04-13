@@ -1,8 +1,16 @@
 const express = require('express');
 const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
+const cors = require('cors');
 
 const app = express();
+
+// =========================
+// CORS FIX (OBRIGATÓRIO)
+// =========================
+app.use(cors({
+    origin: "*"
+}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -30,7 +38,7 @@ app.all('/consultar_nif', async (req, res) => {
 
         await page.goto(
             'https://portaldocontribuinte.minfin.gov.ao/consultar-nif-do-contribuinte',
-            { waitUntil: 'networkidle2' }
+            { waitUntil: 'networkidle2', timeout: 60000 }
         );
 
         await page.waitForSelector('#j_id_2x\\:txtNIFNumber');
@@ -42,19 +50,25 @@ app.all('/consultar_nif', async (req, res) => {
             if (btn) btn.click();
         });
 
-        await page.waitForFunction(() =>
-            document.body.innerText.includes("Nome")
-        );
+        await page.waitForTimeout(8000);
 
         const texto = await page.evaluate(() => document.body.innerText);
 
-        const linhas = texto.split('\n').map(l => l.trim()).filter(Boolean);
+        const linhas = texto
+            .split('\n')
+            .map(l => l.trim())
+            .filter(Boolean);
 
         const get = (campo) => {
             for (let i = 0; i < linhas.length; i++) {
                 if (linhas[i].toLowerCase().includes(campo.toLowerCase())) {
+
                     let val = linhas[i].split(':')[1];
-                    if (!val && linhas[i + 1]) val = linhas[i + 1];
+
+                    if (!val && linhas[i + 1]) {
+                        val = linhas[i + 1];
+                    }
+
                     return (val || '').trim();
                 }
             }
@@ -76,7 +90,9 @@ app.all('/consultar_nif', async (req, res) => {
 
     } catch (e) {
 
-        if (browser) await browser.close();
+        if (browser) {
+            try { await browser.close(); } catch {}
+        }
 
         return res.json({
             status: 'erro',
@@ -88,5 +104,5 @@ app.all('/consultar_nif', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-    console.log('Servidor rodando na porta ' + PORT);
+    console.log("Servidor rodando na porta " + PORT);
 });
